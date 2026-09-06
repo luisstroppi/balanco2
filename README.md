@@ -53,11 +53,11 @@ Configurá en GitHub, dentro de `Settings > Secrets and variables > Actions`:
 - `DONWEB_KNOWN_HOSTS`: línea `known_hosts` verificada del servidor. Es
   recomendable; si se omite, el workflow obtiene la clave con `ssh-keyscan`.
 
-Para instalar por primera vez el virtual host de Nginx, ejecutá manualmente el
-workflow `Deploy balanceo2.ar to Donweb` con `configure_nginx=true`. El usuario
-debe poder ejecutar `sudo -n nginx -t`, recargar Nginx e instalar exclusivamente
-el archivo de `balanceo2.ar`. Los despliegues automáticos posteriores no tocan
-Nginx.
+Cada despliegue verifica el virtual host de `balanco2.ar`, conserva cualquier
+configuración anterior hasta superar `nginx -t` y recarga Nginx sin reiniciarlo.
+En la primera ejecución obtiene un certificado Let's Encrypt mediante Certbot y
+después activa HTTPS. El usuario debe tener acceso a `sudo -n` para ejecutar el
+script y Certbot debe estar instalado en el host.
 
 El despliegue construye y prueba la nueva imagen antes de reemplazar la versión
 activa. Si el control de salud falla, restaura el contenedor anterior. Si el

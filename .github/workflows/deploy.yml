@@ -1,22 +1,16 @@
-name: Deploy balanceo2.ar to Donweb
+name: Deploy balanco2.ar to Donweb
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      configure_nginx:
-        description: Configurar o actualizar el virtual host de balanceo2.ar
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: balanceo2-production
+  group: balanco2-production
   cancel-in-progress: false
 
 jobs:
@@ -113,7 +107,6 @@ jobs:
             "bash '$DEPLOY_PATH/releases/${GITHUB_SHA}/deploy/remote-deploy.sh' '$DEPLOY_PATH' '$GITHUB_SHA'"
 
       - name: Configure Nginx
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.configure_nginx == true }}
         shell: bash
         run: |
           set -Eeuo pipefail

@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly DOMAIN="balanceo2.ar"
-readonly SOURCE_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/nginx/${DOMAIN}.conf"
+readonly DOMAIN="balanco2.ar"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly HTTP_CONFIG="${SCRIPT_DIR}/nginx/${DOMAIN}.http.conf"
+readonly TLS_CONFIG="${SCRIPT_DIR}/nginx/${DOMAIN}.conf"
+readonly ACME_ROOT="/var/www/letsencrypt"
+readonly CERTIFICATE_DIR="/etc/letsencrypt/live/${DOMAIN}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Este script debe ejecutarse como root o mediante sudo." >&2
@@ -14,8 +18,8 @@ if ! command -v nginx >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -f "$SOURCE_CONFIG" ]]; then
-  echo "No se encontró ${SOURCE_CONFIG}." >&2
+if [[ ! -f "$HTTP_CONFIG" || ! -f "$TLS_CONFIG" ]]; then
+  echo "No se encontraron las configuraciones de Nginx para ${DOMAIN}." >&2
   exit 1
 fi
 
@@ -46,10 +50,8 @@ if [[ -f "$target" ]]; then
   cp --archive "$target" "$backup"
 fi
 
-install -o root -g root -m 0644 "$SOURCE_CONFIG" "$target"
-
 if [[ -n "$enabled" ]]; then
-  if [[ -e "$enabled" && "$(realpath "$enabled")" != "$(realpath "$target")" ]]; then
+  if [[ ( -e "$enabled" || -L "$enabled" ) && "$(realpath -m "$enabled")" != "$(realpath -m "$target")" ]]; then
     echo "${enabled} ya apunta a otra configuración; se cancela sin modificarlo." >&2
     if [[ -n "$backup" ]]; then
       cp --archive "$backup" "$target"
@@ -58,7 +60,7 @@ if [[ -n "$enabled" ]]; then
     fi
     exit 1
   fi
-  if [[ ! -e "$enabled" ]]; then
+  if [[ ! -e "$enabled" && ! -L "$enabled" ]]; then
     ln -s "$target" "$enabled"
     created_link="true"
   fi
@@ -75,13 +77,6 @@ restore_configuration() {
   fi
 }
 
-if ! nginx -t; then
-  restore_configuration
-  nginx -t || true
-  echo "La configuración fue restaurada porque Nginx no la aceptó." >&2
-  exit 1
-fi
-
 reload_nginx() {
   if command -v systemctl >/dev/null 2>&1; then
     systemctl reload nginx
@@ -90,22 +85,69 @@ reload_nginx() {
   fi
 }
 
-if ! reload_nginx; then
+activate_configuration() {
+  local source_file="$1"
+  install -o root -g root -m 0644 "$source_file" "$target"
+
+  if ! nginx -t; then
+    return 1
+  fi
+  reload_nginx
+}
+
+mkdir -p "${ACME_ROOT}/.well-known/acme-challenge"
+
+# Activar primero HTTP para que Let's Encrypt pueda validar únicamente este dominio.
+if ! activate_configuration "$HTTP_CONFIG"; then
   restore_configuration
   nginx -t || true
   reload_nginx || true
-  echo "La configuración fue restaurada porque Nginx no pudo recargarse." >&2
+  echo "La configuración HTTP fue restaurada porque Nginx no pudo activarla." >&2
   exit 1
 fi
 
-if command -v curl >/dev/null 2>&1; then
-  if ! curl --fail --silent --show-error --max-time 10 -H "Host: ${DOMAIN}" http://127.0.0.1/ >/dev/null; then
+if [[ ! -s "${CERTIFICATE_DIR}/fullchain.pem" || ! -s "${CERTIFICATE_DIR}/privkey.pem" ]]; then
+  if ! command -v certbot >/dev/null 2>&1; then
     restore_configuration
     nginx -t || true
     reload_nginx || true
-    echo "La configuración fue restaurada porque el virtual host no respondió correctamente." >&2
+    echo "Certbot no está instalado; no se modificó la configuración definitiva." >&2
+    exit 1
+  fi
+
+  if ! certbot certonly \
+    --webroot \
+    --webroot-path "$ACME_ROOT" \
+    --domains "$DOMAIN" \
+    --non-interactive \
+    --agree-tos \
+    --register-unsafely-without-email \
+    --keep-until-expiring; then
+    restore_configuration
+    nginx -t || true
+    reload_nginx || true
+    echo "No se pudo emitir el certificado; se restauró la configuración anterior." >&2
     exit 1
   fi
 fi
 
-echo "Nginx dirige ${DOMAIN} a 127.0.0.1:3000."
+if ! activate_configuration "$TLS_CONFIG"; then
+  restore_configuration
+  nginx -t || true
+  reload_nginx || true
+  echo "La configuración HTTPS fue restaurada porque Nginx no pudo activarla." >&2
+  exit 1
+fi
+
+if command -v curl >/dev/null 2>&1; then
+  if ! curl --fail --silent --show-error --max-time 15 \
+    --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/" >/dev/null; then
+    restore_configuration
+    nginx -t || true
+    reload_nginx || true
+    echo "La configuración fue restaurada porque el sitio HTTPS no respondió correctamente." >&2
+    exit 1
+  fi
+fi
+
+echo "Nginx dirige https://${DOMAIN} a 127.0.0.1:3000."
