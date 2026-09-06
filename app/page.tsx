@@ -324,7 +324,7 @@ export default function Home() {
             <CarbonMoleculeLogo />
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">Movilidad alimentaria</p>
-              <h1 className="text-base font-semibold tracking-tight sm:text-lg">Balance O₂ Argentina</h1>
+              <h1 className="text-base font-semibold tracking-tight sm:text-lg">Balance Co2 Argentina</h1>
             </div>
           </div>
         </div>
@@ -367,7 +367,10 @@ export default function Home() {
           <Metric icon={Database} label="Intensidad" value={`${format2.format(summary.kgPerTonne)} kg`} detail="CO₂e por tonelada transportada" />
         </section>
 
-        <GroupOverview groups={groupOverview} selected={group} onSelect={selectGroup} />
+        <section className="mt-4 grid items-stretch gap-4 xl:grid-cols-2">
+          <GroupOverview groups={groupOverview} selected={group} onSelect={selectGroup} />
+          <RouteMap routes={summary.routes} />
+        </section>
 
         <section id="product-drilldown" className="mt-4 scroll-mt-20 overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
           <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-center lg:justify-between">
@@ -428,8 +431,7 @@ export default function Home() {
           />
         </section>
 
-        <section className="mt-4 grid gap-4 xl:grid-cols-[1.35fr_0.85fr]">
-          <RouteMap routes={summary.routes} />
+        <section className="mt-4">
           <article className="rounded-2xl border border-border bg-white p-5 shadow-sm">
             <div className="mb-4">
               <p className="text-sm font-medium text-primary">Evolución anual</p>
@@ -521,7 +523,7 @@ function TerritoryFilterGroup({ title, marker, children }: { title: string; mark
 function GroupOverview({ groups, selected, onSelect }: { groups: { name: string; emissions: number; trips: number; mass: number }[]; selected: string; onSelect: (name: string) => void }) {
   const total = groups.reduce((sum, item) => sum + item.emissions, 0);
   const max = groups[0]?.emissions || 1;
-  return <section className="mt-4 rounded-2xl border border-border bg-white p-5 shadow-sm">
+  return <section className="rounded-2xl border border-border bg-white p-5 shadow-sm">
     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div><p className="text-sm font-medium text-primary">Vista general</p><h2 className="mt-1 text-xl font-semibold">Emisiones por grupo de productos</h2><p className="mt-1 text-sm text-muted-foreground">Elegí un grupo para ver sus productos y recorridos.</p></div>
       {selected !== 'all' && <Button variant="outline" onClick={() => onSelect('all')}>Ver todos los grupos</Button>}
