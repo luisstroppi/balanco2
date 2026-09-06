@@ -1,0 +1,130 @@
+name: Deploy balanceo2.ar to Donweb
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      configure_nginx:
+        description: Configurar o actualizar el virtual host de balanceo2.ar
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: balanceo2-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Validate and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      DONWEB_HOST: ${{ vars.DONWEB_HOST }}
+      DONWEB_SSH_PORT: ${{ vars.DONWEB_SSH_PORT }}
+      DONWEB_SSH_USER: ${{ vars.DONWEB_SSH_USER }}
+      DONWEB_DEPLOY_PATH: ${{ vars.DONWEB_DEPLOY_PATH }}
+      DONWEB_KNOWN_HOSTS: ${{ secrets.DONWEB_KNOWN_HOSTS }}
+      SSHPASS: ${{ secrets.DONWEB_SSH_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate production build
+        run: npm run build
+
+      - name: Validate deployment settings
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : "${DONWEB_HOST:?Falta la variable DONWEB_HOST}"
+          : "${DONWEB_SSH_PORT:?Falta la variable DONWEB_SSH_PORT}"
+          : "${DONWEB_SSH_USER:?Falta la variable DONWEB_SSH_USER}"
+          : "${SSHPASS:?Falta el secret DONWEB_SSH_PASSWORD}"
+
+          [[ "$DONWEB_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "DONWEB_HOST no es válido"; exit 1; }
+          [[ "$DONWEB_SSH_PORT" =~ ^[0-9]+$ ]] || { echo "DONWEB_SSH_PORT debe ser numérico"; exit 1; }
+          [[ "$DONWEB_SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "DONWEB_SSH_USER no es válido"; exit 1; }
+
+          deploy_path="${DONWEB_DEPLOY_PATH:-apps/balanco2}"
+          [[ "$deploy_path" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "DONWEB_DEPLOY_PATH no es válido"; exit 1; }
+          [[ "$deploy_path" != "/" && "$deploy_path" != *".."* ]] || { echo "DONWEB_DEPLOY_PATH es demasiado amplio"; exit 1; }
+          echo "DEPLOY_PATH=$deploy_path" >> "$GITHUB_ENV"
+
+      - name: Prepare SSH client
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes sshpass
+          install -d -m 0700 "$HOME/.ssh"
+          if [[ -n "$DONWEB_KNOWN_HOSTS" ]]; then
+            printf '%s\n' "$DONWEB_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -p "$DONWEB_SSH_PORT" -H "$DONWEB_HOST" > "$HOME/.ssh/known_hosts"
+          fi
+          chmod 0600 "$HOME/.ssh/known_hosts"
+
+      - name: Package committed source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          archive="$RUNNER_TEMP/balanco2-${GITHUB_SHA}.tar.gz"
+          git archive --format=tar.gz --output="$archive" "$GITHUB_SHA"
+          echo "RELEASE_ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Upload release over SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh_target="${DONWEB_SSH_USER}@${DONWEB_HOST}"
+          incoming="${DEPLOY_PATH}/incoming"
+          release="${DEPLOY_PATH}/releases/${GITHUB_SHA}"
+
+          sshpass -e ssh -p "$DONWEB_SSH_PORT" -o StrictHostKeyChecking=yes "$ssh_target" \
+            "mkdir -p '$incoming' '$release'"
+          sshpass -e scp -P "$DONWEB_SSH_PORT" -o StrictHostKeyChecking=yes \
+            "$RELEASE_ARCHIVE" "$ssh_target:$incoming/${GITHUB_SHA}.tar.gz"
+          sshpass -e ssh -p "$DONWEB_SSH_PORT" -o StrictHostKeyChecking=yes "$ssh_target" \
+            "tar -xzf '$incoming/${GITHUB_SHA}.tar.gz' -C '$release' && rm -f '$incoming/${GITHUB_SHA}.tar.gz'"
+
+      - name: Deploy isolated container
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh_target="${DONWEB_SSH_USER}@${DONWEB_HOST}"
+          sshpass -e ssh -p "$DONWEB_SSH_PORT" -o StrictHostKeyChecking=yes "$ssh_target" \
+            "bash '$DEPLOY_PATH/releases/${GITHUB_SHA}/deploy/remote-deploy.sh' '$DEPLOY_PATH' '$GITHUB_SHA'"
+
+      - name: Configure Nginx
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.configure_nginx == true }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh_target="${DONWEB_SSH_USER}@${DONWEB_HOST}"
+          sshpass -e ssh -p "$DONWEB_SSH_PORT" -o StrictHostKeyChecking=yes "$ssh_target" \
+            "sudo -n bash '$DEPLOY_PATH/releases/${GITHUB_SHA}/deploy/configure-nginx.sh'"
+
+      - name: Verify application endpoint
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh_target="${DONWEB_SSH_USER}@${DONWEB_HOST}"
+          sshpass -e ssh -p "$DONWEB_SSH_PORT" -o StrictHostKeyChecking=yes "$ssh_target" \
+            "curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3000/ >/dev/null"
