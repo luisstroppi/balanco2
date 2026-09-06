@@ -162,8 +162,17 @@ if ! activate_configuration "$TLS_CONFIG"; then
 fi
 
 if command -v curl >/dev/null 2>&1; then
-  if ! curl --fail --silent --show-error --max-time 15 \
-    --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/" >/dev/null; then
+  https_ready="false"
+  for attempt in {1..15}; do
+    if curl --fail --silent --show-error --max-time 15 \
+      --resolve "${DOMAIN}:443:127.0.0.1" "https://${DOMAIN}/" >/dev/null 2>&1; then
+      https_ready="true"
+      break
+    fi
+    sleep 2
+  done
+
+  if [[ "$https_ready" != "true" ]]; then
     restore_configuration
     nginx -t || true
     reload_nginx || true
