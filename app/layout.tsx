@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Huella de productos SENASA Argentina',
+  title: 'Balance O₂ Argentina',
   description: 'Distancias y emisiones estimadas del transporte terrestre de productos registrados por SENASA en Argentina.',
 };
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight, Database, Download, Info, Leaf, MapPin,
+  ArrowRight, Database, Info, Leaf,
   Route as RouteIcon, Scale, Truck,
 } from 'lucide-react';
 import {
@@ -312,16 +312,6 @@ export default function Home() {
     window.requestAnimationFrame(() => document.getElementById('product-drilldown')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
 
-  function downloadSummary() {
-    if (!summary) return;
-    const header = ['producto','origen_provincia','origen_departamento','destino_provincia','destino_departamento','viajes','masa_t','distancia_km','tonelada_km','emisiones_t_co2e'];
-    const rows = summary.productRoutes.map((route) => [route.product, route.op, route.od, route.dp, route.dd, route.trips, route.mass.toFixed(3), route.distance.toFixed(2), route.tkm.toFixed(2), route.emissions.toFixed(4)]);
-    const csv = [header, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"','""')}"`).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url; link.download = 'resumen_huella_transporte.csv'; link.click(); URL.revokeObjectURL(url);
-  }
-
   if (error) return <StateMessage title="No se pudo abrir el dashboard" detail={error} />;
   if (!data || recordsLoading || !summary) return <StateMessage title="Preparando el análisis territorial" detail="Procesando rutas, cargas y factores de emisión…" />;
 
@@ -329,36 +319,35 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-40 border-b border-border/80 bg-background/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-[1600px] items-center px-4 py-3 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground"><Leaf className="size-5" /></span>
+            <CarbonMoleculeLogo />
             <div>
-              <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">HuertaIA</p>
-              <h1 className="text-base font-semibold tracking-tight sm:text-lg">Huella de productos SENASA · Argentina</h1>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">Movilidad alimentaria</p>
+              <h1 className="text-base font-semibold tracking-tight sm:text-lg">Balance O₂ Argentina</h1>
             </div>
           </div>
-          <Button variant="outline" size="lg" onClick={downloadSummary}><Download /> <span className="hidden sm:inline">Descargar resumen</span><span className="sm:hidden">CSV</span></Button>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6 lg:px-8">
-        <div className="mb-4 flex items-start gap-3 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-emerald-950">
-          <Database className="mt-0.5 size-5 shrink-0 text-emerald-700" />
-          <div className="text-sm leading-relaxed">
-            <strong>Dataset completo verificado.</strong> Integra {format0.format(data.meta.dashboardRows)} movimientos de Qlik en {data.meta.sourceFiles} particiones, con {format0.format(data.meta.sourceRows)} filas de detalle. Cobertura 2021–2025 y 2026 hasta el 03/09.
-          </div>
-        </div>
-
         <section className="mb-4 rounded-2xl border border-border bg-white p-4 shadow-sm">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <Filter label="Año" value={year} onChange={setYear} options={data.years.map(String)} allLabel="Todos los años" />
             <Filter label="Grupo de productos" value={group} onChange={setGroup} options={data.groups} allLabel="Todos los grupos" />
             <Filter label="Producto específico" value={product} onChange={setProduct} options={productOptions} allLabel="Todos los productos" />
-            <Filter label="Provincia de origen" value={originProvince} onChange={(value) => { setOriginProvince(value); setOriginDepartment('all'); }} options={data.originProvinces} allLabel="Todo origen" />
-            <Filter label="Partido/departamento de origen" value={originDepartment} onChange={setOriginDepartment} options={originDepartmentOptions} allLabel="Todos los partidos" />
-            <Filter label="Provincia de destino" value={destinationProvince} onChange={(value) => { setDestinationProvince(value); setDestinationDepartment('all'); }} options={data.destinationProvinces} allLabel="Todo destino" />
-            <Filter label="Partido/departamento de destino" value={destinationDepartment} onChange={setDestinationDepartment} options={destinationDepartmentOptions} allLabel="Todos los partidos" />
             <Filter label="Perfil vehicular" value={vehicle} onChange={setVehicle} options={data.factors.map((item) => item.id)} labels={Object.fromEntries(data.factors.map((item) => [item.id, item.label]))} allLabel="" hideAll />
+          </div>
+          <div className="mt-4 grid items-stretch gap-3 xl:grid-cols-[1fr_auto_1fr]">
+            <TerritoryFilterGroup title="Origen" marker="A">
+              <Filter label="Provincia" value={originProvince} onChange={(value) => { setOriginProvince(value); setOriginDepartment('all'); }} options={data.originProvinces} allLabel="Todas las provincias" />
+              <Filter label="Partido / departamento" value={originDepartment} onChange={setOriginDepartment} options={originDepartmentOptions} allLabel="Todos los partidos" />
+            </TerritoryFilterGroup>
+            <div className="hidden items-center justify-center xl:flex" aria-hidden="true"><ArrowRight className="size-5 text-primary/60" /></div>
+            <TerritoryFilterGroup title="Destino" marker="B">
+              <Filter label="Provincia" value={destinationProvince} onChange={(value) => { setDestinationProvince(value); setDestinationDepartment('all'); }} options={data.destinationProvinces} allLabel="Todas las provincias" />
+              <Filter label="Partido / departamento" value={destinationDepartment} onChange={setDestinationDepartment} options={destinationDepartmentOptions} allLabel="Todos los partidos" />
+            </TerritoryFilterGroup>
           </div>
           <div className="mt-4 grid gap-5 border-t border-border pt-4 md:grid-cols-[1fr_1fr_auto] md:items-center">
             <RangeControl label="Factor de distancia vial" value={`${circuity.toFixed(2)}×`} min={1} max={1.6} step={0.05} current={circuity} onChange={setCircuity} />
@@ -403,11 +392,11 @@ export default function Home() {
               <div className="h-[340px] min-w-0">
                 <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                   <BarChart data={summary.products.slice(0, 10)} layout="vertical" margin={{ left: 12, right: 18 }}>
-                    <CartesianGrid horizontal={false} stroke="#e7e5e4" />
-                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={(value) => compact(value)} />
-                    <YAxis type="category" dataKey="name" width={105} axisLine={false} tickLine={false} tick={{ fill: '#334155', fontSize: 11 }} />
-                    <Tooltip content={<ChartTooltip unit="tCO₂e" />} cursor={{ fill: '#f8fafc' }} />
-                    <Bar dataKey="emissions" radius={[0, 6, 6, 0]} fill="#65a30d" />
+                    <CartesianGrid horizontal={false} stroke="#d6edf6" />
+                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#62869a', fontSize: 11 }} tickFormatter={(value) => compact(value)} />
+                    <YAxis type="category" dataKey="name" width={105} axisLine={false} tickLine={false} tick={{ fill: '#294b60', fontSize: 11 }} />
+                    <Tooltip content={<ChartTooltip unit="tCO₂e" />} cursor={{ fill: '#f0f9fd' }} />
+                    <Bar dataKey="emissions" radius={[0, 6, 6, 0]} fill="#79bfdd" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -429,13 +418,13 @@ export default function Home() {
             eyebrow="Distribución territorial · origen"
             title="Toneladas por partido de origen"
             data={summary.originDepartments}
-            color="#d97706"
+            color="#8fcbe3"
           />
           <DepartmentMassChart
             eyebrow="Distribución territorial · destino"
             title="Toneladas por partido de destino"
             data={summary.destinationDepartments}
-            color="#0891b2"
+            color="#5aa8cc"
           />
         </section>
 
@@ -449,11 +438,11 @@ export default function Home() {
             <div className="h-[330px] min-w-0">
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <BarChart data={summary.annual} margin={{ top: 10, right: 6, left: 2, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="#e7e5e4" />
-                  <XAxis dataKey="year" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} tickFormatter={(value) => `${format1.format(value / 1_000_000)}M`} width={54} />
-                  <Tooltip content={<ChartTooltip unit="tCO₂e" />} cursor={{ fill: '#f1f5f9' }} />
-                  <Bar dataKey="emissions" radius={[6, 6, 0, 0]} fill="#0f766e" />
+                  <CartesianGrid vertical={false} stroke="#d6edf6" />
+                  <XAxis dataKey="year" axisLine={false} tickLine={false} tick={{ fill: '#62869a', fontSize: 12 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#62869a', fontSize: 12 }} tickFormatter={(value) => `${format1.format(value / 1_000_000)}M`} width={54} />
+                  <Tooltip content={<ChartTooltip unit="tCO₂e" />} cursor={{ fill: '#f0f9fd' }} />
+                  <Bar dataKey="emissions" radius={[6, 6, 0, 0]} fill="#5aa8cc" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -470,10 +459,10 @@ export default function Home() {
           <MethodCard number="03" title="Emisiones" text={`Masa (t) × distancia (km) × ${format0.format(factor)} gCO₂e/t·km. Resultado WTW expresado en tCO₂e.`} />
         </section>
 
-        <section className="mt-4 rounded-2xl border border-border bg-[#102b2a] p-5 text-white shadow-sm">
+        <section className="mt-4 rounded-2xl border border-border bg-[#eef8fc] p-5 text-foreground shadow-sm">
           <div className="grid gap-6 lg:grid-cols-[1fr_1.5fr]">
             <div>
-              <p className="text-sm font-medium text-lime-300">Calidad y alcance</p>
+              <p className="text-sm font-medium text-primary">Calidad y alcance</p>
               <h2 className="mt-1 text-2xl font-semibold">Qué representa esta estimación</h2>
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -482,9 +471,9 @@ export default function Home() {
               <Quality value={compact(data.meta.sameAreaRows)} label="viajes dentro del mismo departamento" />
             </div>
           </div>
-          <div className="mt-6 grid gap-4 border-t border-white/15 pt-5 text-sm leading-relaxed text-white/70 md:grid-cols-2">
-            <p><strong className="text-white">Limitación territorial.</strong> Las coordenadas son centroides, no domicilios reales. El resultado es una aproximación de orden de magnitud y subestima o sobreestima rutas concretas.</p>
-            <p><strong className="text-white">Cobertura de fuente.</strong> La base integra las 23 particiones disponibles y coincide con los 8.506.233 movimientos informados por Qlik. El año 2026 está actualizado hasta el 03/09.</p>
+          <div className="mt-6 grid gap-4 border-t border-border pt-5 text-sm leading-relaxed text-muted-foreground md:grid-cols-2">
+            <p><strong className="text-foreground">Limitación territorial.</strong> Las coordenadas son centroides, no domicilios reales. El resultado es una aproximación de orden de magnitud y subestima o sobreestima rutas concretas.</p>
+            <p><strong className="text-foreground">Cobertura de fuente.</strong> La base integra las 23 particiones disponibles y coincide con los 8.506.233 movimientos informados por Qlik. El año 2026 está actualizado hasta el 03/09.</p>
           </div>
         </section>
 
@@ -507,6 +496,28 @@ function Filter({ label, value, onChange, options, allLabel, labels = {}, hideAl
   return <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">{label}<Select value={value} onValueChange={onChange}><SelectTrigger className="h-10 w-full bg-background"><SelectValue /></SelectTrigger><SelectContent>{!hideAll && <SelectItem value="all">{allLabel}</SelectItem>}{options.map((option) => <SelectItem key={option} value={option}>{labels[option] ?? option}</SelectItem>)}</SelectContent></Select></label>;
 }
 
+function CarbonMoleculeLogo() {
+  return <span className="grid size-11 shrink-0 place-items-center rounded-2xl border border-[#b9dfed] bg-[#eff9fd] shadow-sm" aria-label="Molécula de carbono">
+    <svg viewBox="0 0 48 48" className="size-9" role="img" aria-hidden="true">
+      <path d="M15 15 9 9M33 15l6-6M15 33l-6 6M33 33l6 6" stroke="#79bfdd" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="24" cy="24" r="11" fill="#ffffff" stroke="#4b9fc5" strokeWidth="2" />
+      <circle cx="8" cy="8" r="4" fill="#bfe5f2" stroke="#4b9fc5" strokeWidth="1.5" />
+      <circle cx="40" cy="8" r="4" fill="#d8f0f8" stroke="#4b9fc5" strokeWidth="1.5" />
+      <circle cx="8" cy="40" r="4" fill="#d8f0f8" stroke="#4b9fc5" strokeWidth="1.5" />
+      <circle cx="40" cy="40" r="4" fill="#bfe5f2" stroke="#4b9fc5" strokeWidth="1.5" />
+      <text x="24" y="28" textAnchor="middle" fill="#245d78" fontSize="12" fontWeight="700">C</text>
+    </svg>
+  </span>;
+}
+
+function TerritoryFilterGroup({ title, marker, children }: { title: string; marker: string; children: React.ReactNode }) {
+  return <fieldset className="rounded-2xl border border-[#c8e6f1] bg-[#f4fbfe] p-3">
+    <legend className="sr-only">{title}</legend>
+    <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary"><span className="grid size-6 place-items-center rounded-full bg-[#d9f0f8] font-mono text-xs">{marker}</span>{title}</div>
+    <div className="grid gap-3 sm:grid-cols-2">{children}</div>
+  </fieldset>;
+}
+
 function GroupOverview({ groups, selected, onSelect }: { groups: { name: string; emissions: number; trips: number; mass: number }[]; selected: string; onSelect: (name: string) => void }) {
   const total = groups.reduce((sum, item) => sum + item.emissions, 0);
   const max = groups[0]?.emissions || 1;
@@ -518,7 +529,7 @@ function GroupOverview({ groups, selected, onSelect }: { groups: { name: string;
     {groups.length ? <div className="mt-5 grid gap-3 md:grid-cols-2">
       {groups.map((item, index) => <button key={item.name} type="button" aria-pressed={selected === item.name} onClick={() => onSelect(item.name)} className={`group rounded-xl border p-3 text-left transition hover:border-primary hover:bg-primary/[.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${selected === item.name ? 'border-primary bg-primary/[.05]' : 'border-border'}`}>
         <div className="flex items-start justify-between gap-3"><span className="text-sm font-semibold">{index + 1}. {item.name}</span><span className="shrink-0 font-mono text-sm font-semibold text-primary">{adaptiveEmissions(item.emissions)}</span></div>
-        <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-gradient-to-r from-primary to-lime-500 transition-all group-hover:brightness-110" style={{ width: `${Math.max(2, item.emissions / max * 100)}%` }} /></div>
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-gradient-to-r from-[#a9d9ea] to-primary transition-all group-hover:brightness-105" style={{ width: `${Math.max(2, item.emissions / max * 100)}%` }} /></div>
         <div className="mt-2 flex justify-between gap-3 text-xs text-muted-foreground"><span>{format1.format(item.emissions / total * 100)}% del total</span><span>{compact(item.trips)} viajes</span></div>
       </button>)}
     </div> : <p className="mt-5 rounded-xl bg-muted p-4 text-sm text-muted-foreground">No hay movimientos para los filtros territoriales y temporales elegidos.</p>}
@@ -535,10 +546,10 @@ function DepartmentMassChart({ eyebrow, title, data, color }: { eyebrow: string;
     {visible.length ? <div className="h-[390px] min-w-0">
       <ResponsiveContainer width="100%" height="100%" minWidth={0}>
         <BarChart data={visible} layout="vertical" margin={{ top: 2, right: 18, left: 10, bottom: 0 }}>
-          <CartesianGrid horizontal={false} stroke="#e7e5e4" />
-          <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={(value) => compact(value)} />
-          <YAxis type="category" dataKey="name" width={150} axisLine={false} tickLine={false} tick={{ fill: '#334155', fontSize: 11 }} />
-          <Tooltip content={<ChartTooltip unit="t" />} cursor={{ fill: '#f8fafc' }} />
+          <CartesianGrid horizontal={false} stroke="#d6edf6" />
+          <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#62869a', fontSize: 11 }} tickFormatter={(value) => compact(value)} />
+          <YAxis type="category" dataKey="name" width={150} axisLine={false} tickLine={false} tick={{ fill: '#294b60', fontSize: 11 }} />
+          <Tooltip content={<ChartTooltip unit="t" />} cursor={{ fill: '#f0f9fd' }} />
           <Bar dataKey="mass" radius={[0, 6, 6, 0]} fill={color} />
         </BarChart>
       </ResponsiveContainer>
@@ -551,7 +562,7 @@ function RangeControl({ label, value, min, max, step, current, onChange }: { lab
 }
 
 function Metric({ icon: Icon, label, value, detail, accent = false }: { icon: typeof Leaf; label: string; value: string; detail: string; accent?: boolean }) {
-  return <article className={`rounded-2xl border p-4 shadow-sm ${accent ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-white'}`}><div className="flex items-center justify-between"><span className={`text-sm font-medium ${accent ? 'text-white/75' : 'text-muted-foreground'}`}>{label}</span><Icon className={`size-4 ${accent ? 'text-lime-300' : 'text-primary'}`} /></div><p className="mt-4 text-[clamp(1.6rem,2vw,2.1rem)] font-semibold tracking-[-0.045em]">{value}</p><p className={`mt-1 text-xs ${accent ? 'text-white/70' : 'text-muted-foreground'}`}>{detail}</p></article>;
+  return <article className={`rounded-2xl border p-4 shadow-sm ${accent ? 'border-[#9fd2e5] bg-[#eaf7fc]' : 'border-border bg-white'}`}><div className="flex items-center justify-between"><span className="text-sm font-medium text-muted-foreground">{label}</span><Icon className="size-4 text-primary" /></div><p className={`mt-4 text-[clamp(1.6rem,2vw,2.1rem)] font-semibold tracking-[-0.045em] ${accent ? 'text-[#205f7d]' : ''}`}>{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></article>;
 }
 
 function RouteMap({ routes }: { routes: RouteSummary[] }) {
@@ -590,18 +601,18 @@ function RouteMap({ routes }: { routes: RouteSummary[] }) {
   const maxEmission = flowRoutes[0]?.emissions || 1;
   const maxNodeMass = Math.max(...origins.map((point) => point.mass), ...destinations.map((point) => point.mass), 1);
   const nodeRadius = (mass: number, maxMass: number) => 2.5 + 18 * Math.sqrt(mass / maxMass);
-  return <article className="relative min-h-[560px] overflow-hidden rounded-2xl border border-border bg-[#102b2a] p-5 text-white shadow-sm">
-    <div className="relative z-10 flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-lime-300">Mapa de flujos</p><h2 className="mt-1 text-xl font-semibold">Rutas y volumen transportado</h2><p className="mt-1 text-xs text-white/55">Área de cada punto proporcional a los kilos enviados o recibidos</p></div><span className="rounded-full bg-white/10 px-3 py-1 text-xs text-white/70">Top {flowRoutes.length} rutas</span></div>
+  return <article className="relative min-h-[560px] overflow-hidden rounded-2xl border border-border bg-[#f4fbfe] p-5 text-foreground shadow-sm">
+    <div className="relative z-10 flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-primary">Mapa de flujos</p><h2 className="mt-1 text-xl font-semibold">Rutas y volumen transportado</h2><p className="mt-1 text-xs text-muted-foreground">Área de cada punto proporcional a los kilos enviados o recibidos</p></div><span className="rounded-full border border-border bg-white px-3 py-1 text-xs text-muted-foreground">Top {flowRoutes.length} rutas</span></div>
     <svg viewBox="0 0 760 700" className="absolute inset-x-0 bottom-0 h-[500px] w-full" role="img" aria-label="Mapa de Argentina con rutas de productos SENASA y nodos proporcionales al peso transportado">
-      <defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="rgba(255,255,255,.045)" /></pattern><clipPath id="argentina-map-clip"><rect x="0" y="0" width="760" height="700" /></clipPath></defs>
+      <defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="rgba(75,159,197,.09)" /></pattern><clipPath id="argentina-map-clip"><rect x="0" y="0" width="760" height="700" /></clipPath></defs>
       <rect width="760" height="700" fill="url(#grid)" />
-      <g clipPath="url(#argentina-map-clip)">{provincePaths.map((province) => <path key={province.id} d={province.path} fill="#173e3b" stroke="rgba(255,255,255,.32)" strokeWidth="1"><title>{province.name}</title></path>)}</g>
-      <g>{flowRoutes.slice().reverse().map((route) => { const a=project(route.olat,route.olon), b=project(route.dlat,route.dlon); const bend=Math.min(70,Math.abs(b.x-a.x)*.18+18); return <path key={route.key} d={`M${a.x},${a.y} Q${(a.x+b.x)/2},${(a.y+b.y)/2-bend} ${b.x},${b.y}`} fill="none" stroke="#a3e635" strokeOpacity={.16 + .62*Math.sqrt(route.emissions/maxEmission)} strokeWidth={.8 + 4.5*Math.sqrt(route.emissions/maxEmission)}><title>{route.od}, {route.op} → {route.dd}, {route.dp}: {format1.format(route.mass * 1000)} kg · {adaptiveEmissions(route.emissions)}</title></path>;})}</g>
-      <g>{destinations.slice().sort((a,b) => b.mass-a.mass).reverse().map((point) => { const p=project(point.lat,point.lon); return <circle key={point.key} cx={p.x} cy={p.y} r={nodeRadius(point.mass,maxNodeMass)} fill="#67e8f9" fillOpacity=".55" stroke="#cffafe" strokeWidth="1"><title>Destino · {point.name}, {point.province}: {format0.format(point.mass * 1000)} kg recibidos</title></circle>;})}</g>
-      <g>{origins.slice().sort((a,b) => b.mass-a.mass).reverse().map((point) => { const p=project(point.lat,point.lon); return <circle key={point.key} cx={p.x} cy={p.y} r={nodeRadius(point.mass,maxNodeMass)} fill="#fbbf24" fillOpacity=".62" stroke="#fef3c7" strokeWidth="1"><title>Origen · {point.name}, {point.province}: {format0.format(point.mass * 1000)} kg enviados</title></circle>;})}</g>
-      <text x="28" y="42" fill="rgba(255,255,255,.65)" fontSize="12">N</text><path d="M32 54V82M32 54l-5 8M32 54l5 8" stroke="rgba(255,255,255,.65)" fill="none" />
+      <g clipPath="url(#argentina-map-clip)">{provincePaths.map((province) => <path key={province.id} d={province.path} fill="#dceff6" stroke="#80bdd6" strokeWidth="1"><title>{province.name}</title></path>)}</g>
+      <g>{flowRoutes.slice().reverse().map((route) => { const a=project(route.olat,route.olon), b=project(route.dlat,route.dlon); const bend=Math.min(70,Math.abs(b.x-a.x)*.18+18); return <path key={route.key} d={`M${a.x},${a.y} Q${(a.x+b.x)/2},${(a.y+b.y)/2-bend} ${b.x},${b.y}`} fill="none" stroke="#3d91b7" strokeOpacity={.16 + .62*Math.sqrt(route.emissions/maxEmission)} strokeWidth={.8 + 4.5*Math.sqrt(route.emissions/maxEmission)}><title>{route.od}, {route.op} → {route.dd}, {route.dp}: {format1.format(route.mass * 1000)} kg · {adaptiveEmissions(route.emissions)}</title></path>;})}</g>
+      <g>{destinations.slice().sort((a,b) => b.mass-a.mass).reverse().map((point) => { const p=project(point.lat,point.lon); return <circle key={point.key} cx={p.x} cy={p.y} r={nodeRadius(point.mass,maxNodeMass)} fill="#8ed5e9" fillOpacity=".72" stroke="#27799f" strokeWidth="1"><title>Destino · {point.name}, {point.province}: {format0.format(point.mass * 1000)} kg recibidos</title></circle>;})}</g>
+      <g>{origins.slice().sort((a,b) => b.mass-a.mass).reverse().map((point) => { const p=project(point.lat,point.lon); return <circle key={point.key} cx={p.x} cy={p.y} r={nodeRadius(point.mass,maxNodeMass)} fill="#ffffff" fillOpacity=".85" stroke="#4b9fc5" strokeWidth="2"><title>Origen · {point.name}, {point.province}: {format0.format(point.mass * 1000)} kg enviados</title></circle>;})}</g>
+      <text x="28" y="42" fill="#527a8e" fontSize="12">N</text><path d="M32 54V82M32 54l-5 8M32 54l5 8" stroke="#527a8e" fill="none" />
     </svg>
-    <div className="absolute bottom-4 left-5 z-10 flex flex-wrap gap-4 text-xs text-white/70"><span className="flex items-center gap-2"><i className="size-3 rounded-full border border-amber-100 bg-amber-400/70" />Kg enviados</span><span className="flex items-center gap-2"><i className="size-3 rounded-full border border-cyan-100 bg-cyan-300/60" />Kg recibidos</span><span className="flex items-center gap-2"><i className="h-0.5 w-5 bg-lime-400" />Flujo</span></div>
+    <div className="absolute bottom-4 left-5 z-10 flex flex-wrap gap-4 text-xs text-muted-foreground"><span className="flex items-center gap-2"><i className="size-3 rounded-full border-2 border-[#4b9fc5] bg-white" />Kg enviados</span><span className="flex items-center gap-2"><i className="size-3 rounded-full border border-[#27799f] bg-[#8ed5e9]" />Kg recibidos</span><span className="flex items-center gap-2"><i className="h-0.5 w-5 bg-[#3d91b7]" />Flujo</span></div>
   </article>;
 }
 
@@ -653,7 +664,7 @@ function MethodCard({ number, title, text }: { number: string; title: string; te
 }
 
 function Quality({ value, label }: { value: string; label: string }) {
-  return <div><p className="text-2xl font-semibold text-lime-300">{value}</p><p className="mt-1 text-sm text-white/65">{label}</p></div>;
+  return <div><p className="text-2xl font-semibold text-primary">{value}</p><p className="mt-1 text-sm text-muted-foreground">{label}</p></div>;
 }
 
 function ChartTooltip({ active, payload, label, unit }: { active?: boolean; payload?: { value: number }[]; label?: string; unit: string }) {
