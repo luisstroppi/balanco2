@@ -7,6 +7,8 @@ readonly HTTP_CONFIG="${SCRIPT_DIR}/nginx/${DOMAIN}.http.conf"
 readonly TLS_CONFIG="${SCRIPT_DIR}/nginx/${DOMAIN}.conf"
 readonly ACME_ROOT="/var/www/letsencrypt"
 readonly CERTIFICATE_DIR="/etc/letsencrypt/live/${DOMAIN}"
+readonly DNS_WAIT_SECONDS="${DNS_WAIT_SECONDS:-900}"
+readonly DNS_POLL_SECONDS="${DNS_POLL_SECONDS:-15}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Este script debe ejecutarse como root o mediante sudo." >&2
@@ -114,6 +116,26 @@ if [[ ! -s "${CERTIFICATE_DIR}/fullchain.pem" || ! -s "${CERTIFICATE_DIR}/privke
     echo "Certbot no está instalado; no se modificó la configuración definitiva." >&2
     exit 1
   fi
+
+  # NIC Argentina puede demorar en publicar una delegación recién creada.
+  # Esperar evita consumir intentos de Let's Encrypt mientras el dominio aún
+  # responde NXDOMAIN. `getent` usa el mismo resolvedor que luego usa Certbot.
+  dns_deadline=$((SECONDS + DNS_WAIT_SECONDS))
+  echo "Esperando que ${DOMAIN} resuelva públicamente (máximo ${DNS_WAIT_SECONDS}s)..."
+  until getent ahostsv4 "$DOMAIN" >/dev/null 2>&1; do
+    if (( SECONDS >= dns_deadline )); then
+      restore_configuration
+      nginx -t || true
+      reload_nginx || true
+      echo "${DOMAIN} sigue sin resolver; se restauró la configuración anterior." >&2
+      exit 1
+    fi
+    sleep "$DNS_POLL_SECONDS"
+  done
+
+  # Dar un breve margen para que desaparezcan respuestas negativas cacheadas
+  # antes de que la autoridad certificadora consulte el dominio.
+  sleep 30
 
   if ! certbot certonly \
     --webroot \
