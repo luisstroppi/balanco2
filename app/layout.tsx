@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'Balance Co2 Argentina',
-  description: 'Distancias y emisiones estimadas del transporte terrestre de productos registrados por SENASA en Argentina.',
+  description: 'Explorá la huella del transporte de productos en Argentina y evaluá soluciones digitales de abastecimiento local.',
 };
 
 export default function RootLayout({
