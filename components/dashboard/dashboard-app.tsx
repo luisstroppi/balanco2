@@ -16,6 +16,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { SiteHeader } from '@/components/site-header';
+import { measureTransport } from '@/lib/emissions/transport';
 
 type RouteRecord = {
   y: number; mo: number; g: string; p: string;
@@ -227,16 +228,14 @@ export default function DashboardApp() {
       if (originDepartment !== 'all' && item.od !== originDepartment) continue;
       if (destinationProvince !== 'all' && item.dp !== destinationProvince) continue;
       if (destinationDepartment !== 'all' && item.dd !== destinationDepartment) continue;
-      const n = plausibleOnly ? item.np : item.n;
-      const m = plausibleOnly ? item.mp : item.m;
-      if (!n || !m) continue;
-      const distance = item.same ? localKm : item.km * circuity;
-      const activity = m * distance;
+      const measure = measureTransport(item, { plausibleOnly, circuity, sameAreaKm: localKm, factorGPerTkm: factor });
+      if (!measure) continue;
+      const { trips: n, massTonnes: m, distanceKm: distance, activityTonneKm: activity } = measure;
       tripRows.push({
         key: `${item.y}|${item.mo}|${item.g}|${item.p}|${item.op}|${item.od}|${item.olat}|${item.olon}|${item.oq}|${item.dp}|${item.dd}|${item.dlat}|${item.dlon}|${item.dq}|${item.km}|${item.same}`,
         year: item.y, month: item.mo, group: item.g, product: item.p,
         op: item.op, od: item.od, dp: item.dp, dd: item.dd,
-        trips: n, mass: m, distance, emissions: activity * factor / 1_000_000,
+        trips: n, mass: m, distance, emissions: measure.emissionsG / 1_000_000,
       });
       trips += n; mass += m; tkm += activity; tripKm += n * distance;
       const annualItem = annual.get(item.y) ?? { trips: 0, mass: 0, tkm: 0 };
@@ -297,12 +296,11 @@ export default function DashboardApp() {
       if (originDepartment !== 'all' && item.od !== originDepartment) continue;
       if (destinationProvince !== 'all' && item.dp !== destinationProvince) continue;
       if (destinationDepartment !== 'all' && item.dd !== destinationDepartment) continue;
-      const n = plausibleOnly ? item.np : item.n;
-      const m = plausibleOnly ? item.mp : item.m;
-      if (!n || !m) continue;
-      const distance = item.same ? localKm : item.km * circuity;
+      const measure = measureTransport(item, { plausibleOnly, circuity, sameAreaKm: localKm, factorGPerTkm: factor });
+      if (!measure) continue;
+      const { trips: n, massTonnes: m, activityTonneKm: activity } = measure;
       const value = overview.get(item.g) ?? { trips: 0, mass: 0, tkm: 0 };
-      value.trips += n; value.mass += m; value.tkm += m * distance; overview.set(item.g, value);
+      value.trips += n; value.mass += m; value.tkm += activity; overview.set(item.g, value);
     }
     return [...overview].map(([name, value]) => ({ name, emissions: value.tkm * factor / 1_000_000, trips: value.trips, mass: value.mass })).sort((a, b) => b.emissions - a.emissions);
   }, [data, records, year, originProvince, originDepartment, destinationProvince, destinationDepartment, plausibleOnly, localKm, circuity, factor]);

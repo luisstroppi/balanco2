@@ -39,6 +39,7 @@ import {
   calculateScenario,
   type ScenarioPoint,
 } from '@/lib/emissions/scenario';
+import { measureTransport } from '@/lib/emissions/transport';
 
 type RouteRecord = {
   y: number;
@@ -54,6 +55,7 @@ type RouteRecord = {
   mp: number;
 };
 type DashboardData = {
+  meta: { sourceUpdated: string };
   factors: { id: string; label: string; gPerTkm: number }[];
   years: number[];
   recordFiles: Record<string, string>;
@@ -72,7 +74,6 @@ const countries: { id: string; name: string; carbon?: number }[] = [
   { id: 'ES', name: 'España · intensidad manual' },
   { id: 'CUSTOM', name: 'Otro país · intensidad manual' },
 ];
-
 const aiModels = [
   {
     id: 'smollm',
@@ -130,7 +131,17 @@ const compact = new Intl.NumberFormat('es-AR', {
   notation: 'compact',
   maximumFractionDigits: 1,
 });
-const formatGrams = (value: number) => `${compact.format(value)} g`;
+const formatEmissions = (value: number) => {
+  const absolute = Math.abs(value);
+  if (absolute >= 1_000_000)
+    return `${format.format(value / 1_000_000)} t CO₂e`;
+  if (absolute >= 1_000) return `${format.format(value / 1_000)} kg CO₂e`;
+  return `${format.format(value)} g CO₂e`;
+};
+const formatMass = (tonnes: number) =>
+  tonnes >= 1000
+    ? `${format.format(tonnes / 1000)} kt`
+    : `${format.format(tonnes)} t`;
 
 export default function SimulatorPage() {
   const [meta, setMeta] = useState<DashboardData | null>(null);
@@ -147,15 +158,15 @@ export default function SimulatorPage() {
   const [localVehicle, setLocalVehicle] = useState('light');
   const [circuity, setCircuity] = useState(1.25);
   const [sameAreaKm, setSameAreaKm] = useState(15);
-  const [demand, setDemand] = useState(10);
+  const [localAvailableTonnes, setLocalAvailableTonnes] = useState(10);
   const [averageKg, setAverageKg] = useState(20);
   const [conversion, setConversion] = useState(20);
   const [localKmMin, setLocalKmMin] = useState(5);
   const [localKmMax, setLocalKmMax] = useState(15);
   const [selectedTransactions, setSelectedTransactions] = useState(0);
-  const [plausibleOnly, setPlausibleOnly] = useState(true);
+  const [plausibleOnly, setPlausibleOnly] = useState(false);
   const [serverPower, setServerPower] = useState(60);
-  const [hours, setHours] = useState(720);
+  const [hoursPerMonth, setHoursPerMonth] = useState(720);
   const [serverPue, setServerPue] = useState(1.2);
   const [serverCountry, setServerCountry] = useState('AR');
   const [serverCarbon, setServerCarbon] = useState(320);
@@ -164,9 +175,10 @@ export default function SimulatorPage() {
   const [inferencesPerAttempt, setInferencesPerAttempt] = useState(2);
   const [aiCountry, setAiCountry] = useState('AR');
   const [aiCarbon, setAiCarbon] = useState(320);
+  const [equilibriumZoom, setEquilibriumZoom] = useState(true);
 
   useEffect(() => {
-    fetch('/data/dashboard.json?v=sim-2')
+    fetch('/data/dashboard.json?v=sim-3')
       .then((r) => {
         if (!r.ok) throw new Error('No se pudo cargar el catálogo SENASA.');
         return r.json();
@@ -183,11 +195,10 @@ export default function SimulatorPage() {
         setLoading(false);
       });
   }, []);
-
   useEffect(() => {
     if (!meta || !year) return;
     let active = true;
-    fetch(`${meta.recordFiles[year]}?v=sim-2`)
+    fetch(`${meta.recordFiles[year]}?v=sim-3`)
       .then(async (r) => {
         if (!r.ok)
           throw new Error(`No se pudieron cargar los datos de ${year}.`);
@@ -214,6 +225,26 @@ export default function SimulatorPage() {
     };
   }, [meta, year]);
 
+  const sourceDate = meta
+    ? new Date(`${meta.meta.sourceUpdated}T00:00:00`)
+    : null;
+  const selectedYear = Number(year);
+  const isPartialYear = Boolean(
+    sourceDate &&
+    selectedYear === sourceDate.getFullYear() &&
+    sourceDate.getMonth() < 11,
+  );
+  const periodMonths = isPartialYear ? sourceDate!.getMonth() + 1 : 12;
+  const yearLabels = Object.fromEntries(
+    (meta?.years ?? []).map((item) => [
+      String(item),
+      sourceDate &&
+      item === sourceDate.getFullYear() &&
+      sourceDate.getMonth() < 11
+        ? `${item} · parcial (${sourceDate.getMonth() + 1} meses)`
+        : `${item} · año completo`,
+    ]),
+  );
   const scopeOptions = useMemo(
     () =>
       [
@@ -268,17 +299,19 @@ export default function SimulatorPage() {
     meta?.factors.find((f) => f.id === localVehicle)?.gPerTkm ?? 750;
   const reference = useMemo(() => {
     let mass = 0,
-      emissionsKg = 0,
+      emissionsG = 0,
       weightedKm = 0,
       rows = 0,
-      trips = 0;
+      trips = 0,
+      activity = 0;
     if (!scopeValue || !province || !department)
       return {
         mass,
-        emissionsKg,
+        emissionsG,
         weightedKm,
         trips,
         rows,
+        activity,
         kgPerTonne: 0,
         avgKm: 0,
       };
@@ -286,23 +319,28 @@ export default function SimulatorPage() {
       const inScope =
         scopeType === 'product' ? r.p === scopeValue : r.g === scopeValue;
       if (!inScope || r.dp !== province || r.dd !== department) continue;
-      const m = plausibleOnly ? r.mp : r.m;
-      const n = plausibleOnly ? r.np : r.n;
-      if (!(m > 0) || !(n > 0)) continue;
-      const distance = r.same ? sameAreaKm : r.km * circuity;
-      mass += m;
-      weightedKm += m * distance;
-      emissionsKg += (m * distance * conventionalFactor) / 1000;
+      const measure = measureTransport(r, {
+        plausibleOnly,
+        circuity,
+        sameAreaKm,
+        factorGPerTkm: conventionalFactor,
+      });
+      if (!measure) continue;
+      mass += measure.massTonnes;
+      emissionsG += measure.emissionsG;
+      weightedKm += measure.massTonnes * measure.distanceKm;
+      activity += measure.activityTonneKm;
+      trips += measure.trips;
       rows += 1;
-      trips += n;
     }
     return {
       mass,
-      emissionsKg,
+      emissionsG,
       weightedKm,
       trips,
       rows,
-      kgPerTonne: mass ? emissionsKg / mass : 0,
+      activity,
+      kgPerTonne: mass ? emissionsG / 1000 / mass : 0,
       avgKm: mass ? weightedKm / mass : 0,
     };
   }, [
@@ -321,15 +359,17 @@ export default function SimulatorPage() {
   const scenario = useMemo(
     () =>
       calculateScenario({
-        demandTonnes: demand,
-        conventionalKgPerTonne: reference.kgPerTonne,
+        referenceMassTonnes: reference.mass,
+        conventionalBaselineG: reference.emissionsG,
+        localAvailableTonnes,
         averageKgPerTransaction: averageKg,
         conversionPct: conversion,
         localDistanceMinKm: localKmMin,
         localDistanceMaxKm: localKmMax,
         localFactorGPerTkm: localFactor,
         serverPowerW: serverPower,
-        serverHours: hours,
+        serverHoursPerMonth: hoursPerMonth,
+        periodMonths,
         serverPue,
         serverCarbonGPerKwh: serverCarbon,
         inferenceWhPerThousand: aiEnabled ? selectedAi.wh : 0,
@@ -339,15 +379,17 @@ export default function SimulatorPage() {
         aiPue: 1,
       }),
     [
-      demand,
-      reference.kgPerTonne,
+      reference.mass,
+      reference.emissionsG,
+      localAvailableTonnes,
       averageKg,
       conversion,
       localKmMin,
       localKmMax,
       localFactor,
       serverPower,
-      hours,
+      hoursPerMonth,
+      periodMonths,
       serverPue,
       serverCarbon,
       aiEnabled,
@@ -356,25 +398,42 @@ export default function SimulatorPage() {
       aiCarbon,
     ],
   );
-
   const selected = Math.min(selectedTransactions, scenario.maximumTransactions);
   const point = scenario.evaluate(selected);
-  const convergence = scenario.convergenceTransactions;
   const equilibrium = scenario.climateEquilibriumTransactions;
-  const convergenceReachable =
-    convergence !== null && convergence <= scenario.maximumTransactions;
   const equilibriumReachable =
     equilibrium !== null && equilibrium <= scenario.maximumTransactions;
+  const equilibriumPoint = equilibriumReachable
+    ? scenario.evaluate(equilibrium!)
+    : null;
+  const maximumPoint = scenario.evaluate(scenario.maximumTransactions);
+  const maximumReductionPct = scenario.baselineG
+    ? (maximumPoint.netSaving / scenario.baselineG) * 100
+    : 0;
+  const equilibriumLimit =
+    equilibriumZoom && equilibriumReachable
+      ? Math.min(
+          scenario.maximumTransactions,
+          Math.max(50, Math.ceil(equilibrium! * 2.5)),
+        )
+      : scenario.maximumTransactions;
+  const equilibriumPoints = useMemo(
+    () => samplePoints(equilibriumLimit, scenario.evaluate),
+    [equilibriumLimit, scenario],
+  );
+  const compositionPoints = useMemo(
+    () => samplePoints(scenario.maximumTransactions, scenario.evaluate),
+    [scenario],
+  );
+  const invalidDistance = localKmMax < localKmMin;
   const ready =
     !loading &&
     reference.mass > 0 &&
-    demand > 0 &&
+    localAvailableTonnes > 0 &&
     averageKg > 0 &&
     conversion > 0 &&
     conversion <= 100 &&
-    localKmMin >= 0 &&
-    localKmMax >= localKmMin;
-  const invalidDistance = localKmMax < localKmMin;
+    !invalidDistance;
 
   const resetTerritory = (type: ScopeType) => {
     setScopeType(type);
@@ -398,18 +457,19 @@ export default function SimulatorPage() {
   return (
     <main className="min-h-screen bg-[#f8fcfe] text-foreground">
       <SiteHeader />
-      <div className="mx-auto max-w-[1580px] px-4 py-7 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1600px] px-4 py-7 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-3 border-b border-border pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="flex items-center gap-2 text-sm font-semibold text-primary">
-              <Calculator className="size-4" /> Simulador de proximidad
+              <Calculator className="size-4" /> Simulador territorial
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">
-              Balance entre transporte y tecnología
+              Balance anual de emisiones para circuitos de proximidad basados en
+              tecnología de la información
             </h1>
             <p className="mt-2 max-w-3xl leading-relaxed text-muted-foreground">
-              Evaluá cuántas operaciones locales hacen falta para compensar la
-              infraestructura digital y reducir la huella del abastecimiento.
+              La referencia completa surge de los movimientos SENASA del
+              alimento y distrito seleccionados.
             </p>
           </div>
           <InternalLink
@@ -422,7 +482,7 @@ export default function SimulatorPage() {
         {error && <Notice tone="error">{error}</Notice>}
         <div className="mt-6 grid items-start gap-6 xl:grid-cols-[440px_1fr]">
           <aside className="space-y-4 xl:sticky xl:top-20">
-            <Panel number="01" title="Objetivo y referencia" icon={<Truck />}>
+            <Panel number="01" title="Referencia SENASA" icon={<Truck />}>
               <TextField
                 label="Objetivo"
                 description="Explique qué alimento o grupo se quiere proveer mediante un circuito local asistido por tecnología."
@@ -432,7 +492,7 @@ export default function SimulatorPage() {
               />
               <Picker
                 label="Año SENASA"
-                description="Período utilizado para construir la referencia de transporte convencional."
+                description="Define el período de movimientos y el tiempo atribuible a la infraestructura."
                 value={year}
                 onChange={(value) => {
                   setLoading(true);
@@ -442,6 +502,7 @@ export default function SimulatorPage() {
                   setDepartment('');
                 }}
                 options={(meta?.years ?? []).map(String)}
+                labels={yearLabels}
                 placeholder="Seleccione el período"
               />
               <Picker
@@ -474,7 +535,7 @@ export default function SimulatorPage() {
               />
               <Picker
                 label="Provincia de destino"
-                description="Provincia de consumo cuyo abastecimiento convencional se toma como referencia."
+                description="Provincia cuyo abastecimiento registrado se toma como referencia."
                 value={province}
                 onChange={(value) => {
                   setProvince(value);
@@ -487,7 +548,7 @@ export default function SimulatorPage() {
               />
               <Picker
                 label="Partido o departamento"
-                description="Unidad territorial utilizada para estimar la intensidad convencional."
+                description="Unidad territorial de destino incluida en la estimación."
                 value={department}
                 onChange={(value) => {
                   setDepartment(value);
@@ -499,7 +560,7 @@ export default function SimulatorPage() {
               />
               <Picker
                 label="Vehículo convencional"
-                description="Factor de emisión aplicado a los recorridos registrados por SENASA."
+                description="Factor aplicado tanto en el dashboard como en esta referencia."
                 value={conventionalVehicle}
                 onChange={setConventionalVehicle}
                 options={(meta?.factors ?? []).map((f) => f.id)}
@@ -513,48 +574,53 @@ export default function SimulatorPage() {
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   label="Factor vial"
-                  description="Ajusta la distancia geodésica para aproximar un recorrido por ruta."
+                  description="Ajusta la distancia geodésica para aproximar la ruta."
                   value={circuity}
                   onChange={setCircuity}
                   step="0.05"
                 />
                 <NumberField
-                  label="Viaje dentro del distrito"
-                  description="Distancia asignada cuando origen y destino están en el mismo distrito."
+                  label="Viaje en el distrito"
+                  description="Distancia asignada a movimientos internos."
                   suffix="km"
                   value={sameAreaKm}
                   onChange={setSameAreaKm}
                 />
               </div>
-              <div className="flex items-center justify-between rounded-xl bg-secondary/55 px-3 py-2.5 text-sm font-medium">
-                <span>Sólo cargas ≤ 60 t</span>
-                <Switch
-                  aria-label="Sólo cargas de hasta 60 toneladas"
-                  checked={plausibleOnly}
-                  onCheckedChange={setPlausibleOnly}
-                />
+              <div>
+                <div className="flex items-center justify-between rounded-xl bg-secondary/55 px-3 py-2.5 text-sm font-medium">
+                  <span>Sólo cargas ≤ 60 t</span>
+                  <Switch
+                    aria-label="Sólo cargas de hasta 60 toneladas"
+                    checked={plausibleOnly}
+                    onCheckedChange={setPlausibleOnly}
+                  />
+                </div>
+                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  El valor inicial coincide con el dashboard para que ambas
+                  páginas comparen la misma muestra.
+                </p>
               </div>
             </Panel>
-
-            <Panel number="02" title="Operación local" icon={<CheckCircle2 />}>
+            <Panel number="02" title="Plataforma local" icon={<CheckCircle2 />}>
               <NumberField
-                label="Demanda del período"
-                description="Toneladas actualmente abastecidas que podrían pasar al circuito local."
+                label="Toneladas disponibles localmente"
+                description="Oferta máxima que puede sustituir movimientos convencionales durante el período. Por encima de este valor no se descuentan más emisiones."
                 suffix="t"
-                value={demand}
-                onChange={setDemand}
+                value={localAvailableTonnes}
+                onChange={setLocalAvailableTonnes}
               />
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   label="Kg por transacción"
-                  description="Peso promedio entregado en cada compra concretada por la plataforma."
+                  description="Peso promedio entregado en cada compra concretada."
                   suffix="kg"
                   value={averageKg}
                   onChange={setAverageKg}
                 />
                 <NumberField
                   label="Conversión"
-                  description="Porcentaje de intentos que terminan en una compra local."
+                  description="Porcentaje de intentos que terminan en una compra."
                   suffix="%"
                   value={conversion}
                   onChange={setConversion}
@@ -564,14 +630,14 @@ export default function SimulatorPage() {
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   label="Distancia mínima"
-                  description="Menor recorrido vial esperado entre proveedor y comprador."
+                  description="Menor recorrido vial local esperado."
                   suffix="km"
                   value={localKmMin}
                   onChange={setLocalKmMin}
                 />
                 <NumberField
                   label="Distancia máxima"
-                  description="Mayor recorrido admitido para considerar una entrega como local."
+                  description="Mayor recorrido admitido como local."
                   suffix="km"
                   value={localKmMax}
                   onChange={setLocalKmMax}
@@ -585,7 +651,7 @@ export default function SimulatorPage() {
               )}
               <Picker
                 label="Vehículo local"
-                description="Factor de emisión utilizado para los traslados concretados mediante la plataforma."
+                description="Factor aplicado al transporte de proximidad."
                 value={localVehicle}
                 onChange={setLocalVehicle}
                 options={(meta?.factors ?? []).map((f) => f.id)}
@@ -597,27 +663,26 @@ export default function SimulatorPage() {
                 )}
               />
             </Panel>
-
             <Panel number="03" title="Infraestructura" icon={<Server />}>
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   label="Potencia media"
-                  description="Potencia atribuible a esta aplicación, no la potencia nominal del equipo."
+                  description="Potencia atribuible a la aplicación."
                   suffix="W"
                   value={serverPower}
                   onChange={setServerPower}
                 />
                 <NumberField
-                  label="Horas del período"
-                  description="Tiempo durante el cual la infraestructura permanece operativa."
+                  label="Horas por mes"
+                  description="Se multiplican por los meses del período SENASA."
                   suffix="h"
-                  value={hours}
-                  onChange={setHours}
+                  value={hoursPerMonth}
+                  onChange={setHoursPerMonth}
                 />
               </div>
               <Picker
                 label="País del servidor"
-                description="Ubicación cuya matriz eléctrica se aplica al consumo del servidor."
+                description="Matriz eléctrica aplicada al consumo del servidor."
                 value={serverCountry}
                 onChange={(value) => changeCountry(value, 'server')}
                 options={countries.map((c) => c.id)}
@@ -628,21 +693,31 @@ export default function SimulatorPage() {
               <div className="grid grid-cols-2 gap-3">
                 <NumberField
                   label="Intensidad eléctrica"
-                  description="Emisiones de la electricidad consumida por el servidor."
+                  description="Emisiones de la electricidad consumida."
                   suffix="g/kWh"
                   value={serverCarbon}
                   onChange={setServerCarbon}
                 />
                 <NumberField
                   label="PUE"
-                  description="Relación entre energía total del centro de datos y energía informática."
+                  description="Energía total del centro respecto del equipo."
                   value={serverPue}
                   onChange={setServerPue}
                   step="0.05"
                 />
               </div>
+              <p className="rounded-xl bg-secondary/55 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                Período computado:{' '}
+                <strong className="text-foreground">
+                  {periodMonths} meses ·{' '}
+                  {format.format(hoursPerMonth * periodMonths)} horas
+                </strong>
+                .{' '}
+                {isPartialYear
+                  ? 'El año seleccionado tiene cobertura parcial.'
+                  : 'El costo mensual se contabiliza 12 veces.'}
+              </p>
             </Panel>
-
             <Panel
               number="04"
               title="Inteligencia artificial"
@@ -660,7 +735,7 @@ export default function SimulatorPage() {
                 <>
                   <Picker
                     label="Modelo o perfil"
-                    description="Consumo de referencia por cada mil inferencias según el perfil elegido."
+                    description="Consumo de referencia por cada mil inferencias."
                     value={aiModel}
                     onChange={setAiModel}
                     options={aiModels.map((m) => m.id)}
@@ -674,13 +749,13 @@ export default function SimulatorPage() {
                   </p>
                   <NumberField
                     label="Inferencias por intento"
-                    description="Cantidad media de inferencias realizadas por cada interacción, exitosa o no."
+                    description="Consultas realizadas por cada interacción, exitosa o no."
                     value={inferencesPerAttempt}
                     onChange={setInferencesPerAttempt}
                   />
                   <Picker
-                    label="País de ejecución de IA"
-                    description="Matriz eléctrica aplicada al procesamiento del modelo."
+                    label="País de ejecución"
+                    description="Matriz eléctrica aplicada a la inferencia."
                     value={aiCountry}
                     onChange={(value) => changeCountry(value, 'ai')}
                     options={countries.map((c) => c.id)}
@@ -690,20 +765,15 @@ export default function SimulatorPage() {
                   />
                   <NumberField
                     label="Intensidad eléctrica IA"
-                    description="Emisiones de la electricidad utilizada para ejecutar el modelo."
+                    description="Emisiones de la electricidad utilizada por el modelo."
                     suffix="g/kWh"
                     value={aiCarbon}
                     onChange={setAiCarbon}
                   />
-                  <Notice>
-                    La referencia de IA mide principalmente GPU; CPU, RAM, red y
-                    almacenamiento no se incluyen en este modo base.
-                  </Notice>
                 </>
               )}
             </Panel>
           </aside>
-
           <section className="min-w-0 space-y-5">
             <div className="rounded-2xl border border-primary/25 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-[.16em] text-primary">
@@ -715,14 +785,14 @@ export default function SimulatorPage() {
               </p>
               <p className="mt-2 text-sm text-muted-foreground">
                 {department && province
-                  ? `Referencia territorial: ${department}, ${province}.`
+                  ? `${scopeValue} · destino ${department}, ${province} · ${year}`
                   : 'Seleccione un alimento y un distrito de destino. Ningún territorio está preseleccionado.'}
               </p>
             </div>
             {loading ? (
               <EmptyState
                 title="Cargando la referencia territorial"
-                detail="Estamos preparando el catálogo del período seleccionado."
+                detail="Estamos preparando los movimientos del período seleccionado."
               />
             ) : !scopeValue || !province || !department ? (
               <EmptyState
@@ -731,230 +801,324 @@ export default function SimulatorPage() {
               />
             ) : reference.mass <= 0 ? (
               <Notice tone="error">
-                No hay masa utilizable para esta combinación. Seleccione otro
-                alimento, grupo o territorio.
+                No hay masa utilizable para esta combinación.
               </Notice>
             ) : !ready ? (
               <Notice tone="error">
-                Revise la demanda, el peso por transacción, la conversión y el
+                Revise la disponibilidad local, el peso, la conversión y el
                 rango de distancia antes de calcular.
               </Notice>
             ) : (
               <>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <article className="rounded-2xl border border-primary/25 bg-gradient-to-br from-white to-[#f0faff] p-5 shadow-sm">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-primary">
+                        Referencia territorial SENASA
+                      </p>
+                      <h2 className="mt-1 text-2xl font-semibold">
+                        {scopeValue} con destino {department}
+                      </h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Todos los movimientos incluidos por los filtros durante{' '}
+                        {year}
+                        {isPartialYear ? ' (período parcial)' : ''}.
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-white px-4 py-3 text-sm shadow-sm">
+                      <span className="text-muted-foreground">
+                        Huella convencional estimada
+                      </span>
+                      <strong className="ml-2 text-primary">
+                        {formatEmissions(reference.emissionsG)}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <MiniMetric
+                      label="Carga registrada"
+                      value={formatMass(reference.mass)}
+                    />
+                    <MiniMetric
+                      label="Registros"
+                      value={compact.format(reference.trips)}
+                    />
+                    <MiniMetric
+                      label="Actividad"
+                      value={`${compact.format(reference.activity)} t·km`}
+                    />
+                    <MiniMetric
+                      label="Distancia ponderada"
+                      value={`${format.format(reference.avgKm)} km`}
+                    />
+                    <MiniMetric
+                      label="Intensidad"
+                      value={`${format.format(reference.kgPerTonne)} kg/t`}
+                    />
+                  </div>
+                </article>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <Metric
-                    label="Referencia inicial"
-                    value={formatGrams(scenario.baselineG)}
-                    detail="Logística convencional del período"
+                    label="Infraestructura del período"
+                    value={formatEmissions(scenario.serverG)}
+                    detail={`${scenario.periodMonths} meses · ${format.format(scenario.serverHours)} horas`}
                   />
                   <Metric
-                    label="Huella fija"
-                    value={formatGrams(scenario.serverG)}
-                    detail="Servidor antes de la primera operación"
-                  />
-                  <Metric
-                    label="Traslados máximos"
-                    value={integer.format(scenario.maximumTransactions)}
-                    detail={`${format.format(averageKg)} kg por transacción`}
-                  />
-                  <CriticalMetric
-                    label="Convergencia"
-                    transactions={convergence}
-                    reachable={convergenceReachable}
+                    label="Capacidad local de sustitución"
+                    value={compact.format(scenario.maximumTransactions)}
+                    detail={`${formatMass(scenario.maximumSubstitutableTonnes)} disponibles de ${formatMass(reference.mass)} SENASA`}
                   />
                   <CriticalMetric
                     label="Equilibrio climático"
                     transactions={equilibrium}
                     reachable={equilibriumReachable}
+                    detail="Ahorro logístico = huella digital"
+                  />
+                  <Metric
+                    label="Ahorro máximo posible"
+                    value={formatEmissions(maximumPoint.netSaving)}
+                    detail={`${format.format(maximumReductionPct)}% de la huella inicial con la oferta disponible`}
                   />
                 </div>
 
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MiniMetric
+                    label="Costo fijo de TI"
+                    value={formatEmissions(scenario.serverG)}
+                  />
+                  <MiniMetric
+                    label="Costo variable de TI por operación"
+                    value={formatEmissions(scenario.aiPerTransaction)}
+                  />
+                  <MiniMetric
+                    label="Transporte de proximidad por operación"
+                    value={formatEmissions(scenario.localPerTransaction)}
+                  />
+                  <MiniMetric
+                    label="Emisiones logísticas evitadas por operación"
+                    value={formatEmissions(scenario.netAvoidedPerTransaction)}
+                  />
+                </div>
+
+                <ChartCard
+                  eyebrow="Reducción posible"
+                  title="Impacto de la solución"
+                  description="Compara la huella inicial del distrito con las emisiones que permanecen al incorporar oferta de proximidad. La diferencia entre ambas curvas es el ahorro neto."
+                  badge={`Reducción máxima: ${format.format(maximumReductionPct)}%`}
+                >
+                  <EmissionsChart
+                    data={compositionPoints}
+                    xKey="substitutedTonnes"
+                    xLabel="Toneladas reemplazadas"
+                    maxX={scenario.maximumSubstitutableTonnes}
+                    lines={[
+                      {
+                        key: 'initialEmissions',
+                        name: 'Emisiones iniciales',
+                        color: '#df7b42',
+                      },
+                      {
+                        key: 'totalScenario',
+                        name: 'Emisiones con la solución',
+                        color: '#167fa4',
+                      },
+                    ]}
+                    rangeKey="totalScenarioRange"
+                    rangeName="Rango por distancia de proximidad"
+                    marker={null}
+                  />
+                </ChartCard>
+
+                <ChartCard
+                  eyebrow="Punto de equilibrio"
+                  title="Balance de emisiones"
+                  description="Compara la huella digital más el transporte de proximidad con las emisiones convencionales evitadas. El balance es: solución local + TI − emisiones evitadas."
+                  badge={
+                    equilibriumPoint
+                      ? `Equilibrio: ${formatMass(equilibriumPoint.substitutedTonnes)}`
+                      : 'Equilibrio no alcanzable'
+                  }
+                >
+                  <div className="mb-3 flex items-center justify-end gap-2 text-sm">
+                    <span className="text-muted-foreground">
+                      Escala del gráfico
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEquilibriumZoom(true)}
+                      className={`rounded-full px-3 py-1.5 font-medium ${equilibriumZoom ? 'bg-primary text-white' : 'bg-secondary text-primary'}`}
+                    >
+                      Cerca del equilibrio
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEquilibriumZoom(false)}
+                      className={`rounded-full px-3 py-1.5 font-medium ${!equilibriumZoom ? 'bg-primary text-white' : 'bg-secondary text-primary'}`}
+                    >
+                      Todo el distrito
+                    </button>
+                  </div>
+                  <EmissionsChart
+                    data={equilibriumPoints}
+                    xKey="substitutedTonnes"
+                    xLabel="Toneladas reemplazadas"
+                    maxX={scenario.evaluate(equilibriumLimit).substitutedTonnes}
+                    lines={[
+                      {
+                        key: 'localPlusDigital',
+                        name: 'Transporte de proximidad + TI',
+                        color: '#167fa4',
+                      },
+                      {
+                        key: 'conventionalDisplaced',
+                        name: 'Emisiones convencionales evitadas',
+                        color: '#2d9a77',
+                      },
+                    ]}
+                    rangeKey="localPlusDigitalRange"
+                    rangeName="Rango por distancia de proximidad"
+                    marker={
+                      equilibriumPoint && equilibrium! <= equilibriumLimit
+                        ? {
+                            x: equilibriumPoint.substitutedTonnes,
+                            y: equilibriumPoint.localPlusDigital,
+                            label: 'Balance cero',
+                            color: '#76528f',
+                          }
+                        : null
+                    }
+                  />
+                </ChartCard>
+
+                <ChartCard
+                  eyebrow="Resultado acumulado"
+                  title="Ahorro total"
+                  description="Totaliza las emisiones netas evitadas hasta alcanzar la menor de las dos capacidades: la carga SENASA o las toneladas disponibles en proximidad."
+                  badge={`${maximumPoint.netSaving >= 0 ? '+' : ''}${formatEmissions(maximumPoint.netSaving)}`}
+                >
+                  <EmissionsChart
+                    data={compositionPoints}
+                    xKey="substitutedTonnes"
+                    xLabel="Toneladas reemplazadas"
+                    maxX={scenario.maximumSubstitutableTonnes}
+                    lines={[
+                      {
+                        key: 'netSaving',
+                        name: 'Ahorro neto acumulado',
+                        color: '#2d9a77',
+                      },
+                    ]}
+                    rangeKey="netSavingRange"
+                    rangeName="Rango de ahorro por distancia"
+                    marker={null}
+                  />
+                </ChartCard>
+
                 <article className="rounded-2xl border border-border bg-white p-5 shadow-sm">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                       <p className="text-sm font-semibold text-primary">
-                        Curvas por operación concretada
+                        Punto analizado
                       </p>
                       <h2 className="mt-1 text-xl font-semibold">
-                        Cuándo la proximidad compensa la tecnología
+                        {integer.format(selected)} transacciones concretadas
                       </h2>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        La banda celeste representa el rango de distancia local;
-                        la línea utiliza su punto medio.
+                        {format.format(point.substitutedKg)} kg ·{' '}
+                        {format.format(point.adoptionPct)}% de la masa
+                        territorial.
                       </p>
                     </div>
-                    <div
-                      className={`rounded-xl px-4 py-3 text-sm font-semibold ${point.netSaving >= 0 ? 'bg-cyan-50 text-cyan-900' : 'bg-amber-50 text-amber-900'}`}
+                    <Field
+                      label="Cantidad exacta"
+                      description="También puede escribirse un valor puntual."
                     >
-                      Balance en {integer.format(selected)} traslados:{' '}
-                      {point.netSaving >= 0 ? '+' : ''}
-                      {formatGrams(point.netSaving)}
-                    </div>
+                      <Input
+                        aria-label="Cantidad exacta de transacciones"
+                        type="number"
+                        min="0"
+                        max={scenario.maximumTransactions}
+                        value={selected}
+                        onChange={(event) =>
+                          setSelectedTransactions(
+                            Math.max(
+                              0,
+                              Math.min(
+                                scenario.maximumTransactions,
+                                Number(event.target.value),
+                              ),
+                            ),
+                          )
+                        }
+                      />
+                    </Field>
                   </div>
-                  <div className="mt-5 h-[460px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart
-                        data={scenario.points}
-                        margin={{ top: 24, right: 20, left: 14, bottom: 8 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#d8ebf3" />
-                        <XAxis
-                          type="number"
-                          dataKey="localTransactions"
-                          domain={[0, scenario.maximumTransactions]}
-                          tickFormatter={(value) => compact.format(value)}
-                          label={{
-                            value: 'Traslados locales concretados',
-                            position: 'insideBottom',
-                            offset: -3,
-                          }}
-                          height={50}
-                        />
-                        <YAxis
-                          tickFormatter={(value) => compact.format(value)}
-                          label={{
-                            value: 'g CO₂e',
-                            angle: -90,
-                            position: 'insideLeft',
-                          }}
-                          width={72}
-                        />
-                        <Tooltip content={<ScenarioTooltip />} />
-                        <Legend />
-                        <Area
-                          type="monotone"
-                          dataKey="platformRange"
-                          name="Rango de distancia local"
-                          fill="#bfeaf6"
-                          fillOpacity={0.55}
-                          stroke="none"
-                          legendType="none"
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="platform"
-                          name="Solución TI + transporte local"
-                          stroke="#0785ad"
-                          strokeWidth={3}
-                          dot={false}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="conventionalRemaining"
-                          name="Logística tradicional restante"
-                          stroke="#df7b42"
-                          strokeWidth={3}
-                          dot={false}
-                        />
-                        {convergenceReachable && (
-                          <>
-                            <ReferenceLine
-                              x={convergence!}
-                              stroke="#0b607a"
-                              strokeDasharray="5 4"
-                              label={{
-                                value: 'Convergencia',
-                                position: 'insideTopLeft',
-                                fill: '#0b607a',
-                              }}
-                            />
-                            <ReferenceDot
-                              x={convergence!}
-                              y={scenario.evaluate(convergence!).platform}
-                              r={5}
-                              fill="#0b607a"
-                              stroke="#fff"
-                              strokeWidth={2}
-                            />
-                          </>
-                        )}
-                        {equilibriumReachable && (
-                          <>
-                            <ReferenceLine
-                              x={equilibrium!}
-                              stroke="#76528f"
-                              strokeDasharray="3 4"
-                              label={{
-                                value: 'Equilibrio climático',
-                                position: 'insideTopRight',
-                                fill: '#76528f',
-                              }}
-                            />
-                            <ReferenceDot
-                              x={equilibrium!}
-                              y={scenario.evaluate(equilibrium!).platform}
-                              r={5}
-                              fill="#76528f"
-                              stroke="#fff"
-                              strokeWidth={2}
-                            />
-                          </>
-                        )}
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between text-sm">
-                      <span>Traslados locales concretados</span>
-                      <span className="font-semibold text-primary">
-                        {integer.format(selected)} ·{' '}
-                        {format.format(point.substitutedKg)} kg sustituidos
-                      </span>
-                    </div>
-                    <Slider
-                      aria-label="Traslados locales concretados"
-                      className="mt-3"
-                      value={[selected]}
-                      onValueChange={(value) =>
-                        setSelectedTransactions(
-                          Array.isArray(value) ? value[0] : value,
-                        )
-                      }
-                      min={0}
-                      max={scenario.maximumTransactions}
-                      step={1}
-                    />
-                  </div>
+                  <Slider
+                    aria-label="Transacciones locales concretadas"
+                    className="mt-5"
+                    value={[selected]}
+                    onValueChange={(value) =>
+                      setSelectedTransactions(
+                        Array.isArray(value) ? value[0] : value,
+                      )
+                    }
+                    min={0}
+                    max={scenario.maximumTransactions}
+                    step={Math.max(
+                      1,
+                      Math.floor(scenario.maximumTransactions / 1000),
+                    )}
+                  />
                 </article>
-
                 <div className="grid gap-4 md:grid-cols-2">
                   <Breakdown
                     title="Operación seleccionada"
                     rows={[
-                      ['Traslados concretados', point.localTransactions, ''],
+                      [
+                        'Transacciones concretadas',
+                        point.localTransactions,
+                        '',
+                      ],
                       ['Intentos requeridos', point.attempts, ''],
                       ['Inferencias totales', point.inferenceCount, ''],
                       ['Masa sustituida', point.substitutedKg, ' kg'],
-                      ['Adopción de la demanda', point.adoptionPct, ' %'],
+                      ['Adopción territorial', point.adoptionPct, ' %'],
                     ]}
                   />
                   <Breakdown
-                    title="Balance de emisiones"
+                    title="Balance del paper"
                     rows={[
                       [
-                        'Logística tradicional restante',
-                        point.conventionalRemaining,
+                        'Convencional desplazado',
+                        point.conventionalDisplaced,
                         ' g CO₂e',
                       ],
-                      ['Transporte local', point.localTransport, ' g CO₂e'],
-                      ['Servidor', point.server, ' g CO₂e'],
-                      ['IA', point.ai, ' g CO₂e'],
-                      ['Total del escenario', point.totalScenario, ' g CO₂e'],
+                      [
+                        'Transporte de proximidad',
+                        point.localTransport,
+                        ' g CO₂e',
+                      ],
+                      ['Huella digital', point.digital, ' g CO₂e'],
+                      [
+                        'Balance (solución − evitadas)',
+                        point.emissionsBalance,
+                        ' g CO₂e',
+                      ],
                       ['Ahorro neto', point.netSaving, ' g CO₂e'],
                     ]}
                   />
                 </div>
                 <Notice>
-                  <strong>Lectura:</strong> la convergencia iguala las dos
-                  líneas visibles. El equilibrio climático ocurre cuando las
-                  emisiones añadidas por tecnología y reparto local igualan las
-                  emisiones convencionales evitadas.
+                  <strong>Identidad de control:</strong> huella total del
+                  escenario = logística convencional restante + transporte local
+                  + huella digital. El ahorro neto es la diferencia frente a la
+                  huella convencional territorial inicial.
                 </Notice>
                 <Notice>
-                  <strong>Alcance:</strong> estimación de transporte y operación
-                  digital. No incluye producción agrícola, frío, desperdicio,
-                  fabricación de equipos ni confirma que cada operación elimine
-                  un viaje convencional completo.
+                  <strong>Alcance:</strong> SENASA aporta movimientos y pesos.
+                  Las emisiones se estiman con distancias y factores GLEC; el
+                  resultado no demuestra que cada operación local suprima un
+                  viaje completo.
                 </Notice>
               </>
             )}
@@ -965,6 +1129,12 @@ export default function SimulatorPage() {
   );
 }
 
+function samplePoints(limit: number, evaluate: (x: number) => ScenarioPoint) {
+  if (!(limit > 0)) return [evaluate(0)];
+  const values = new Set<number>([0, limit]);
+  for (let i = 0; i <= 100; i++) values.add((limit * i) / 100);
+  return [...values].sort((a, b) => a - b).map(evaluate);
+}
 function Panel({
   number,
   title,
@@ -1139,14 +1309,24 @@ function Metric({
     </article>
   );
 }
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-border/80 bg-white px-3 py-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-semibold">{value}</p>
+    </div>
+  );
+}
 function CriticalMetric({
   label,
   transactions,
   reachable,
+  detail,
 }: {
   label: string;
   transactions: number | null;
   reachable: boolean;
+  detail: string;
 }) {
   return (
     <Metric
@@ -1158,8 +1338,8 @@ function CriticalMetric({
         transactions === null
           ? 'No existe con estos parámetros'
           : reachable
-            ? 'traslados locales estimados'
-            : 'Supera la demanda definida'
+            ? detail
+            : 'Supera la masa registrada'
       }
     />
   );
@@ -1225,43 +1405,183 @@ function Breakdown({
     </article>
   );
 }
+function ChartCard({
+  eyebrow,
+  title,
+  description,
+  badge,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  badge: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <article className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-primary">{eyebrow}</p>
+          <h2 className="mt-1 text-xl font-semibold">{title}</h2>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            {description}
+          </p>
+        </div>
+        <div className="shrink-0 rounded-xl bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-900">
+          {badge}
+        </div>
+      </div>
+      <div className="mt-5">{children}</div>
+    </article>
+  );
+}
+type ChartLine = { key: keyof ScenarioPoint; name: string; color: string };
+function EmissionsChart({
+  data,
+  xKey,
+  xLabel,
+  maxX,
+  lines,
+  rangeKey,
+  rangeName,
+  marker,
+}: {
+  data: ScenarioPoint[];
+  xKey: 'localTransactions' | 'substitutedTonnes';
+  xLabel: string;
+  maxX: number;
+  lines: ChartLine[];
+  rangeKey?: keyof ScenarioPoint;
+  rangeName?: string;
+  marker: { x: number; y: number; label: string; color: string } | null;
+}) {
+  const maximumG = data.reduce((maximum, point) => {
+    const lineMaximum = Math.max(
+      ...lines.map((line) => Math.abs(point[line.key] as number)),
+    );
+    const range = rangeKey ? point[rangeKey] : null;
+    const rangeMaximum = Array.isArray(range)
+      ? Math.max(...range.map((value) => Math.abs(value)))
+      : 0;
+    return Math.max(maximum, lineMaximum, rangeMaximum);
+  }, 0);
+  const yScale =
+    maximumG >= 1_000_000
+      ? { divisor: 1_000_000, unit: 't CO₂e' }
+      : maximumG >= 1_000
+        ? { divisor: 1_000, unit: 'kg CO₂e' }
+        : { divisor: 1, unit: 'g CO₂e' };
+  return (
+    <div className="h-[390px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart
+          data={data}
+          margin={{ top: 28, right: 24, left: 20, bottom: 8 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" stroke="#d8ebf3" />
+          <XAxis
+            type="number"
+            dataKey={xKey}
+            domain={[0, maxX]}
+            tickFormatter={(value) => compact.format(value)}
+            label={{
+              value: xLabel,
+              position: 'insideBottom',
+              offset: -3,
+            }}
+            height={50}
+          />
+          <YAxis
+            tickFormatter={(value) => format.format(value / yScale.divisor)}
+            label={{ value: yScale.unit, angle: -90, position: 'insideLeft' }}
+            width={88}
+          />
+          <Tooltip content={<ScenarioTooltip lines={lines} xKey={xKey} />} />
+          <Legend />
+          {rangeKey && (
+            <Area
+              type="monotone"
+              dataKey={rangeKey as string}
+              name={rangeName}
+              fill="#bfeaf6"
+              fillOpacity={0.55}
+              stroke="none"
+              legendType="none"
+            />
+          )}
+          {lines.map((line) => (
+            <Line
+              key={line.key as string}
+              type="monotone"
+              dataKey={line.key as string}
+              name={line.name}
+              stroke={line.color}
+              strokeWidth={3}
+              dot={false}
+            />
+          ))}
+          {marker && (
+            <>
+              <ReferenceLine
+                x={marker.x}
+                stroke={marker.color}
+                strokeDasharray="5 4"
+                label={{
+                  value: marker.label,
+                  position: 'insideTopRight',
+                  fill: marker.color,
+                }}
+              />
+              <ReferenceDot
+                x={marker.x}
+                y={marker.y}
+                r={5}
+                fill={marker.color}
+                stroke="#fff"
+                strokeWidth={2}
+              />
+            </>
+          )}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
 function ScenarioTooltip({
   active,
   payload,
+  lines,
+  xKey,
 }: {
   active?: boolean;
   payload?: { payload: ScenarioPoint }[];
+  lines: ChartLine[];
+  xKey: 'localTransactions' | 'substitutedTonnes';
 }) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
   return (
     <div className="min-w-64 rounded-xl border border-border bg-white p-3 text-xs shadow-xl">
       <p className="mb-2 font-semibold">
-        {integer.format(point.localTransactions)} traslados concretados
+        {xKey === 'substitutedTonnes'
+          ? `${format.format(point.substitutedTonnes)} t reemplazadas`
+          : `${integer.format(point.localTransactions)} transacciones`}
       </p>
       <TooltipRow
         label="Masa sustituida"
         value={`${format.format(point.substitutedKg)} kg`}
       />
-      <TooltipRow
-        label="Intentos requeridos"
-        value={format.format(point.attempts)}
-      />
-      <TooltipRow
-        label="Inferencias"
-        value={format.format(point.inferenceCount)}
-      />
-      <TooltipRow
-        label="Solución TI + local"
-        value={formatGrams(point.platform)}
-      />
-      <TooltipRow
-        label="Logística restante"
-        value={formatGrams(point.conventionalRemaining)}
-      />
+      {lines.map((line) => (
+        <TooltipRow
+          key={line.key as string}
+          label={line.name}
+          value={formatEmissions(point[line.key] as number)}
+        />
+      ))}
       <TooltipRow
         label="Ahorro neto"
-        value={`${point.netSaving >= 0 ? '+' : ''}${formatGrams(point.netSaving)}`}
+        value={`${point.netSaving >= 0 ? '+' : ''}${formatEmissions(point.netSaving)}`}
       />
     </div>
   );
