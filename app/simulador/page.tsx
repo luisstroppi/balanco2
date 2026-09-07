@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { Area, AreaChart, CartesianGrid, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AlertCircle, BrainCircuit, Calculator, CheckCircle2, Info, Server, Truck } from 'lucide-react';
 import { SiteHeader } from '@/components/site-header';
+import { InternalLink } from '@/components/internal-link';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
@@ -90,7 +90,7 @@ export default function SimulatorPage() {
 
   return <main className="min-h-screen bg-[#f8fcfe] text-foreground"><SiteHeader />
     <div className="mx-auto max-w-[1580px] px-4 py-7 sm:px-6 lg:px-8">
-      <div className="flex flex-col gap-3 border-b border-border pb-6 lg:flex-row lg:items-end lg:justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold text-primary"><Calculator className="size-4"/> Simulador de proximidad</p><h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Balance entre transporte y tecnología</h1><p className="mt-2 max-w-3xl leading-relaxed text-muted-foreground">Definí una alternativa local y observá cuándo el ahorro logístico compensa el servidor y la IA.</p></div><Link href="/#fuentes" className="text-sm font-semibold text-primary hover:underline">Consultar fuentes y límites</Link></div>
+      <div className="flex flex-col gap-3 border-b border-border pb-6 lg:flex-row lg:items-end lg:justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold text-primary"><Calculator className="size-4"/> Simulador de proximidad</p><h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Balance entre transporte y tecnología</h1><p className="mt-2 max-w-3xl leading-relaxed text-muted-foreground">Definí una alternativa local y observá cuándo el ahorro logístico compensa el servidor y la IA.</p></div><InternalLink href="/#fuentes" className="text-sm font-semibold text-primary hover:underline">Consultar fuentes y límites</InternalLink></div>
       {error&&<Notice tone="error">{error}</Notice>}
       <div className="mt-6 grid items-start gap-6 xl:grid-cols-[430px_1fr]">
         <aside className="space-y-4 xl:sticky xl:top-20">

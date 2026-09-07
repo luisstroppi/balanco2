@@ -1,6 +1,6 @@
-import Link from 'next/link';
 import { ArrowRight, BarChart3, BookOpen, Calculator, MapPinned } from 'lucide-react';
 import { CarbonLogo, SiteHeader } from '@/components/site-header';
+import { InternalLink } from '@/components/internal-link';
 
 const sources = [
   { name: 'SENASA', role: 'Movimientos, productos, pesos y territorios de origen y destino.', href: 'https://qliksensebycores.senasa.gob.ar/sense/app/2c5b45af-04a5-42e6-be1d-2424656625de/sheet/c8f024ca-17d6-40b6-ac4f-13737142fa34/state/analysis' },
@@ -23,8 +23,8 @@ export default function Home() {
           <h1 className="mt-5 text-4xl font-semibold leading-[1.04] tracking-[-.045em] sm:text-6xl lg:text-7xl">Calculá cuándo la tecnología y los alimentos de cercanía <span className="text-primary">reducen la huella de carbono.</span></h1>
           <p className="mt-7 max-w-2xl text-lg leading-relaxed text-muted-foreground">Explorá el transporte de productos en Argentina y compará el ahorro de un circuito local con las emisiones de la solución digital que lo hace posible.</p>
           <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-            <Link className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-foreground px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-foreground/90" href="/dashboard">Explorar el dashboard <ArrowRight className="size-4" /></Link>
-            <Link className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-primary/35 bg-white px-5 text-sm font-semibold text-foreground shadow-sm transition hover:bg-secondary" href="/simulador">Evaluar una solución <Calculator className="size-4 text-primary" /></Link>
+            <InternalLink className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-foreground px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-foreground/90" href="/dashboard">Huella de Transporte por Distrito <ArrowRight className="size-4" /></InternalLink>
+            <InternalLink className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-primary/35 bg-white px-5 text-sm font-semibold text-foreground shadow-sm transition hover:bg-secondary" href="/simulador">Evaluar una Solución Tecnológica <Calculator className="size-4 text-primary" /></InternalLink>
           </div>
         </div>
         <div className="relative mx-auto hidden aspect-square w-full max-w-[480px] lg:block" aria-hidden="true">
@@ -38,12 +38,12 @@ export default function Home() {
     </section>
     <section className="mx-auto max-w-[1440px] px-5 py-16 sm:px-8">
       <div className="grid gap-5 md:grid-cols-2">
-        <Link href="/dashboard" className="group rounded-3xl border border-border bg-white p-7 shadow-sm transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-md">
+        <InternalLink href="/dashboard" className="group rounded-3xl border border-border bg-white p-7 shadow-sm transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-md">
           <BarChart3 className="size-7 text-primary" /><p className="mt-8 text-sm font-semibold text-primary">01 · Observar</p><h2 className="mt-2 text-2xl font-semibold">Huella del transporte de productos</h2><p className="mt-3 leading-relaxed text-muted-foreground">Filtrá los movimientos registrados, compará grupos y productos, y examiná rutas, volúmenes y emisiones estimadas.</p><span className="mt-7 inline-flex items-center gap-2 text-sm font-semibold">Abrir dashboard <ArrowRight className="size-4 transition group-hover:translate-x-1" /></span>
-        </Link>
-        <Link href="/simulador" className="group rounded-3xl border border-border bg-secondary/45 p-7 shadow-sm transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-md">
+        </InternalLink>
+        <InternalLink href="/simulador" className="group rounded-3xl border border-border bg-secondary/45 p-7 shadow-sm transition hover:-translate-y-1 hover:border-primary/40 hover:shadow-md">
           <Calculator className="size-7 text-primary" /><p className="mt-8 text-sm font-semibold text-primary">02 · Evaluar</p><h2 className="mt-2 text-2xl font-semibold">Balance de una solución de proximidad</h2><p className="mt-3 leading-relaxed text-muted-foreground">Definí un escenario local y descubrí cuántas toneladas deben cambiar de circuito para compensar la huella digital.</p><span className="mt-7 inline-flex items-center gap-2 text-sm font-semibold">Abrir simulador <ArrowRight className="size-4 transition group-hover:translate-x-1" /></span>
-        </Link>
+        </InternalLink>
       </div>
     </section>
     <section id="fuentes" className="scroll-mt-20 border-t border-border bg-secondary/30">

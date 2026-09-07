@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { InternalLink } from '@/components/internal-link';
 
 export function CarbonLogo({ large = false }: { large?: boolean }) {
   const size = large ? 'size-28' : 'size-11';
@@ -14,8 +14,8 @@ export function CarbonLogo({ large = false }: { large?: boolean }) {
 export function SiteHeader() {
   return <header className="sticky top-0 z-50 border-b border-border/80 bg-white/92 backdrop-blur-xl">
     <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-5 px-5 py-3 sm:px-8">
-      <Link href="/" className="flex items-center gap-3"><CarbonLogo /><div><p className="text-[10px] font-semibold uppercase tracking-[.22em] text-primary">Movilidad alimentaria</p><p className="text-base font-semibold tracking-tight">Balance Co2 Argentina</p></div></Link>
-      <nav aria-label="Navegación principal" className="flex items-center gap-1 text-sm font-medium"><Link className="hidden rounded-lg px-3 py-2 hover:bg-secondary sm:block" href="/dashboard">Dashboard</Link><Link className="rounded-lg px-3 py-2 hover:bg-secondary" href="/simulador">Simulador</Link><Link className="hidden rounded-lg px-3 py-2 hover:bg-secondary md:block" href="/#fuentes">Fuentes</Link></nav>
+      <InternalLink href="/" className="flex items-center gap-3"><CarbonLogo /><div><p className="text-[10px] font-semibold uppercase tracking-[.22em] text-primary">Movilidad alimentaria</p><p className="text-base font-semibold tracking-tight">Balance Co2 Argentina</p></div></InternalLink>
+      <nav aria-label="Navegación principal" className="flex items-center gap-1 text-sm font-medium"><InternalLink className="hidden rounded-lg px-3 py-2 hover:bg-secondary sm:block" href="/dashboard">Dashboard</InternalLink><InternalLink className="rounded-lg px-3 py-2 hover:bg-secondary" href="/simulador">Simulador</InternalLink><InternalLink className="hidden rounded-lg px-3 py-2 hover:bg-secondary md:block" href="/#fuentes">Fuentes</InternalLink></nav>
     </div>
   </header>;
 }
